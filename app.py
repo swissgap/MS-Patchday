@@ -69,13 +69,17 @@ def fetch_msrc_updates():
 
 def classify_high_impact_releases(raw_data, patchday):
     """Filtert MSRC API auf High-Impact Releases"""
+    # Immer DataFrame mit festen Spalten zurückgeben
     results = []
+    columns = ["Kategorie", "Produkt", "Release", "Proxy Impact", "Impact Score"]
     if "value" not in raw_data:
-        return pd.DataFrame()
+        return pd.DataFrame(results, columns=columns)
+    
     window_start, window_end = patchday_window(patchday)
     for item in raw_data["value"]:
         release_str = item.get("releaseDate")
-        product = (item.get("productName") or "").lower()
+        product_name = item.get("productName") or ""
+        product = product_name.lower()
         if not release_str:
             continue
         try:
@@ -89,7 +93,7 @@ def classify_high_impact_releases(raw_data, patchday):
             if any(k in product for k in keywords):
                 results.append({
                     "Kategorie": category,
-                    "Produkt": item.get("productName"),
+                    "Produkt": product_name,
                     "Release": release_dt.strftime("%d.%m.%Y %H:%M"),
                     "Proxy Impact": "HIGH",
                     "Impact Score": IMPACT_SCORES[category]
@@ -98,12 +102,12 @@ def classify_high_impact_releases(raw_data, patchday):
         if not category_matched:
             results.append({
                 "Kategorie": "Other",
-                "Produkt": item.get("productName"),
+                "Produkt": product_name,
                 "Release": release_dt.strftime("%d.%m.%Y %H:%M"),
                 "Proxy Impact": "LOW",
                 "Impact Score": 1
             })
-    return pd.DataFrame(results)
+    return pd.DataFrame(results, columns=columns)
 
 def patchday_traffic_light(days_to_patchday, high_impact_count):
     if high_impact_count > 0:
@@ -115,16 +119,10 @@ def patchday_traffic_light(days_to_patchday, high_impact_count):
     return "🟢 GRÜN", "Kein erhöhter Microsoft Update Traffic erwartet"
 
 def patchday_category_preview():
-    """
-    Gibt vorab an, welche Kategorien beim nächsten Patchday typischerweise Updates bekommen.
-    Windows / Defender / Office = High-Impact, Other = optional
-    """
+    """Vorschau für nächste Patchday-Kategorien"""
     preview_data = []
     for cat in ALL_CATEGORIES:
-        if cat in HIGH_IMPACT_KEYWORDS:
-            impact = "HIGH"
-        else:
-            impact = "LOW"
+        impact = "HIGH" if cat in HIGH_IMPACT_KEYWORDS else "LOW"
         preview_data.append({
             "Kategorie": cat,
             "Erwarteter Impact": impact
@@ -155,7 +153,7 @@ raw_data = fetch_msrc_updates()
 if "error" in raw_data:
     st.error(f"❌ MSRC API nicht erreichbar: {raw_data['error']}")
     st.info("Patchday-Erinnerung funktioniert weiterhin ohne API.")
-    df_high = pd.DataFrame()
+    df_high = pd.DataFrame(columns=["Kategorie", "Produkt", "Release", "Proxy Impact", "Impact Score"])
 else:
     st.success("✅ Echte Microsoft-Daten erfolgreich geladen")
     df_high = classify_high_impact_releases(raw_data, patchday)
@@ -163,7 +161,10 @@ else:
 # -----------------------------
 # High-Impact Releases
 # -----------------------------
-high_impact_count = len(df_high[df_high["Kategorie"].isin(HIGH_IMPACT_KEYWORDS)])
+if "Kategorie" in df_high.columns:
+    high_impact_count = len(df_high[df_high["Kategorie"].isin(HIGH_IMPACT_KEYWORDS)])
+else:
+    high_impact_count = 0
 
 ampel, ampel_text = patchday_traffic_light(days_left, high_impact_count)
 st.subheader("🚦 Proxy Traffic Ampel (High-Impact Fokus)")
@@ -215,5 +216,3 @@ with st.expander("Domains / Bypass Settings"):
 st.caption(
     "Live MSRC Daten | High-Impact Patchday Monitoring | FortiProxy Ops"
 )
-
-
