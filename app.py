@@ -209,6 +209,23 @@ with st.expander("Domains / Bypass Settings"):
 - Logging: ❌ Minimal  
 - Proxy Caching aktivieren (optional)
 """)
+# -------------------------------------------------
+# Patchday Preview
+# -------------------------------------------------
+st.subheader("📅 Patchday Vorschau")
+
+preview = []
+for i in range(6):
+    future = patchday + timedelta(days=30 * i)
+    pd_day = second_tuesday(future.year, future.month)
+    preview.append({
+        "Monat": pd_day.strftime("%B %Y"),
+        "Datum": pd_day.strftime("%d.%m.%Y"),
+        "Typischer Impact": "Erhöhter Microsoft Update & CDN Traffic"
+    })
+
+df = pd.DataFrame(preview)
+st.dataframe(df, hide_index=True, use_container_width=True)
 
 # -----------------------------
 # Footer
