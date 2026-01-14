@@ -1,151 +1,129 @@
 import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
-import base64
 
 # -------------------------------------------------
 # Page Config
 # -------------------------------------------------
 st.set_page_config(
-    page_title="Patchday FortiProxy Impact Monitor",
-    page_icon="🧱",
+    page_title="Microsoft Patchday Reminder & Proxy Impact",
+    page_icon="🚦",
     layout="centered"
 )
 
-st.title("🧱 Microsoft Patchday – FortiProxy Impact Monitor")
-st.caption("Early Warning & Operations Dashboard für Proxy & Netzwerk")
+st.title("🚦 Microsoft Patchday – Reminder & Proxy Impact")
+st.caption("Frühwarnsystem für IT-Betrieb, Proxy & Netzwerk")
 
 # -------------------------------------------------
 # Helper Functions
 # -------------------------------------------------
 def second_tuesday(year, month):
     d = date(year, month, 1)
-    while d.weekday() != 1:
+    while d.weekday() != 1:  # Tuesday
         d += timedelta(days=1)
     return d + timedelta(days=7)
 
-def get_next_patchday():
-    today = date.today()
-    for y in range(today.year, today.year + 2):
-        for m in range(1, 13):
-            pd_day = second_tuesday(y, m)
+def next_patchday(today):
+    year = today.year
+    for _ in range(24):
+        for month in range(1, 13):
+            pd_day = second_tuesday(year, month)
             if pd_day >= today:
                 return pd_day
+        year += 1
 
-def impact(days):
-    if days <= 0:
-        return "🔴 HIGH", "Patchday – Peak Traffic aktiv"
-    if days <= 1:
-        return "🔴 HIGH", "Extrem hoher Update-Traffic"
-    if days <= 3:
-        return "🟠 MEDIUM", "Deutlich erhöhter Microsoft-Traffic"
-    return "🟢 LOW", "Vorbereitungsphase"
-
-def create_ics(patchday):
-    ics = f"""BEGIN:VCALENDAR
-VERSION:2.0
-BEGIN:VEVENT
-DTSTART;VALUE=DATE:{patchday.strftime('%Y%m%d')}
-DTEND;VALUE=DATE:{(patchday + timedelta(days=1)).strftime('%Y%m%d')}
-SUMMARY:Microsoft Patchday (FortiProxy Impact)
-DESCRIPTION:Erhöhter Microsoft Update Traffic über Proxy
-END:VEVENT
-END:VCALENDAR
-"""
-    return base64.b64encode(ics.encode()).decode()
+def impact_level(days_left):
+    if days_left <= 1:
+        return "🔴 HIGH", "Sehr hoher Microsoft-Traffic zu erwarten"
+    elif days_left <= 3:
+        return "🟠 MEDIUM", "Deutlich erhöhter Proxy- & CDN-Traffic"
+    else:
+        return "🟢 LOW", "Normalbetrieb – Vorbereitung empfohlen"
 
 # -------------------------------------------------
-# Patchday Calculation
+# Calculate Patchday
 # -------------------------------------------------
 today = date.today()
-patchday = get_next_patchday()
+patchday = next_patchday(today)
 days_left = (patchday - today).days
-level, impact_text = impact(days_left)
+level, impact_text = impact_level(days_left)
 
 # -------------------------------------------------
-# Reminder
+# Reminder Section
 # -------------------------------------------------
-st.subheader("⏰ Patchday Reminder")
+st.subheader("⏰ Nächster Microsoft Patchday")
 
 st.metric(
-    "Nächster Microsoft Patchday",
-    patchday.strftime("%d.%m.%Y"),
-    f"in {days_left} Tagen"
+    label="Patchday Datum",
+    value=patchday.strftime("%d.%m.%Y"),
+    delta=f"in {days_left} Tagen"
 )
 
 st.markdown(f"""
-### 🚦 Impact Level
-**Status:** {level}  
+### 🚦 Impact-Einschätzung
+**Stufe:** {level}  
 **Erwartung:** {impact_text}
 """)
 
 # -------------------------------------------------
-# Reminder Timeline
+# Proxy Impact Warning
 # -------------------------------------------------
-st.info("""
-📢 **Automatische Reminder-Logik**
-- **T-3:** Vorbereitung Proxy / Capacity
-- **T-1:** Monitoring & Ops-Bereitschaft
-- **T-0:** Live-Traffic & Incident-Fokus
+st.error("""
+⚠️ **ACHTUNG: Proxy- & Netzwerk-Impact**
+
+Am Microsoft Patchday ist mit **massiv erhöhtem ausgehendem Traffic**
+in Richtung Microsoft-Cloud & CDN zu rechnen.
+
+**Typische Auswirkungen:**
+- Erhöhte Proxy-CPU & Session-Zahlen
+- Bandbreiten-Sättigung
+- Verzögerte Updates / Client-Timeouts
+- Beeinträchtigung anderer Cloud-Dienste
 """)
 
 # -------------------------------------------------
-# Traffic Forecast
+# Preparation Checklist
 # -------------------------------------------------
-st.subheader("📊 Erwarteter Proxy-Traffic")
-
-forecast = pd.DataFrame([
-    {"Phase": "Normalbetrieb", "Sessions": "1x", "Bandbreite": "1x"},
-    {"Phase": "T-3 bis T-1", "Sessions": "1.5–2x", "Bandbreite": "1.3–1.6x"},
-    {"Phase": "Patchday", "Sessions": "3–6x", "Bandbreite": "2–4x"},
-    {"Phase": "Post Patchday", "Sessions": "1.5–2x", "Bandbreite": "1.2–1.5x"},
-])
-
-st.dataframe(forecast, hide_index=True, use_container_width=True)
-
-# -------------------------------------------------
-# FortiProxy Recommendations
-# -------------------------------------------------
-st.subheader("🧱 FortiProxy – Empfohlene Massnahmen")
-
-with st.expander("🔓 Microsoft Update Whitelist / Bypass"):
+with st.expander("🛠 Operative Vorbereitung (empfohlen)"):
     st.markdown("""
-**Empfohlene Ziele (Domain-based):**
-- `*.windowsupdate.microsoft.com`
-- `*.update.microsoft.com`
-- `*.download.windowsupdate.com`
-- `*.officecdn.microsoft.com`
-- `*.delivery.mp.microsoft.com`
+**Vor Patchday (T-3 bis T-1):**
+- ✅ Proxy- & Firewall-Health prüfen
+- ✅ Bandbreiten- & QoS-Regeln kontrollieren
+- ✅ SSL Inspection Ausnahmen prüfen
+- ✅ Windows Update Caching (WSUS / Delivery Optimization)
 
-**Empfehlung:**
-- SSL Inspection **bypassen**
-- Antivirus **flow-based**
-- Logging reduzieren (Performance!)
-""")
+**Am Patchday:**
+- 👀 Live-Monitoring (Sessions, Throughput, Errors)
+- 📊 Proxy-Dashboards offen halten
+- 🧯 Incident-Bereitschaft sicherstellen
 
-with st.expander("⚙️ FortiProxy Tuning (Best Practice)"):
-    st.markdown("""
-- ✔ Proxy Worker & CPU Load prüfen
-- ✔ Max Sessions & TCP Timeouts kontrollieren
-- ✔ Explicit Proxy bevorzugen
-- ✔ Caching aktivieren (falls genutzt)
-- ✔ QoS für Business Apps absichern
+**Nach Patchday:**
+- 📉 Traffic normalisiert sich i.d.R. nach 24–72h
+- 📝 Lessons Learned dokumentieren
 """)
 
 # -------------------------------------------------
-# Calendar Export
+# Patchday Preview
 # -------------------------------------------------
-st.subheader("📅 Patchday in Kalender übernehmen")
+st.subheader("📅 Patchday Vorschau")
 
-ics = create_ics(patchday)
-st.markdown(
-    f"[📥 ICS-Datei herunterladen](data:text/calendar;base64,{ics})",
-    unsafe_allow_html=True
-)
+preview = []
+for i in range(6):
+    future = patchday + timedelta(days=30 * i)
+    pd_day = second_tuesday(future.year, future.month)
+    preview.append({
+        "Monat": pd_day.strftime("%B %Y"),
+        "Datum": pd_day.strftime("%d.%m.%Y"),
+        "Typischer Impact": "Erhöhter Microsoft Update & CDN Traffic"
+    })
+
+df = pd.DataFrame(preview)
+st.dataframe(df, hide_index=True, use_container_width=True)
 
 # -------------------------------------------------
 # Footer
 # -------------------------------------------------
 st.caption(
-    "Designed für FortiProxy | Netzwerk-, Security- & IT-Operations-Teams"
+    "🚨 Reminder-App für IT Operations | Fokus: Proxy, Firewall, Netzwerk, Cloud Access"
 )
+
