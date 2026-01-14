@@ -1,129 +1,146 @@
 import streamlit as st
 import pandas as pd
+import requests
 from datetime import date, timedelta
+import time
 
 # -------------------------------------------------
 # Page Config
 # -------------------------------------------------
 st.set_page_config(
-    page_title="Microsoft Patchday Reminder & Proxy Impact",
-    page_icon="🚦",
+    page_title="Microsoft Patchday – FortiProxy Live Monitor",
+    page_icon="🧱",
     layout="centered"
 )
 
-st.title("🚦 Microsoft Patchday – Reminder & Proxy Impact")
-st.caption("Frühwarnsystem für IT-Betrieb, Proxy & Netzwerk")
+st.title("🧱 Microsoft Patchday – FortiProxy Live Monitor")
+st.caption("Live-Daten von Microsoft Security Update Guide (MSRC)")
 
 # -------------------------------------------------
-# Helper Functions
+# Helper: Patchday
 # -------------------------------------------------
 def second_tuesday(year, month):
     d = date(year, month, 1)
-    while d.weekday() != 1:  # Tuesday
+    while d.weekday() != 1:
         d += timedelta(days=1)
     return d + timedelta(days=7)
 
-def next_patchday(today):
-    year = today.year
-    for _ in range(24):
-        for month in range(1, 13):
-            pd_day = second_tuesday(year, month)
+def next_patchday():
+    today = date.today()
+    for y in range(today.year, today.year + 2):
+        for m in range(1, 13):
+            pd_day = second_tuesday(y, m)
             if pd_day >= today:
                 return pd_day
-        year += 1
-
-def impact_level(days_left):
-    if days_left <= 1:
-        return "🔴 HIGH", "Sehr hoher Microsoft-Traffic zu erwarten"
-    elif days_left <= 3:
-        return "🟠 MEDIUM", "Deutlich erhöhter Proxy- & CDN-Traffic"
-    else:
-        return "🟢 LOW", "Normalbetrieb – Vorbereitung empfohlen"
 
 # -------------------------------------------------
-# Calculate Patchday
+# MSRC API Fetch
 # -------------------------------------------------
+@st.cache_data(ttl=3600)
+def fetch_msrc_updates():
+    """
+    Holt echte Microsoft Security Updates (MSRC)
+    """
+    url = "https://api.msrc.microsoft.com/sug/v2.0/en-US/affectedProduct"
+    headers = {
+        "Accept": "application/json"
+    }
+
+    try:
+        r = requests.get(url, headers=headers, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        return data
+    except Exception as e:
+        return {"error": str(e)}
+
+def extract_patchday_updates(raw):
+    """
+    Filtert relevante Patchday-Informationen
+    """
+    results = []
+
+    if "value" not in raw:
+        return results
+
+    for item in raw["value"]:
+        results.append({
+            "Produkt": item.get("productName"),
+            "Produkt Familie": item.get("productFamily"),
+            "Release Datum": item.get("releaseDate", "unbekannt"),
+            "Impact": "Security Update / Patchday relevant"
+        })
+
+    return pd.DataFrame(results)
+
+# -------------------------------------------------
+# Patchday Core
+# -------------------------------------------------
+patchday = next_patchday()
 today = date.today()
-patchday = next_patchday(today)
 days_left = (patchday - today).days
-level, impact_text = impact_level(days_left)
 
 # -------------------------------------------------
-# Reminder Section
+# Header Info
 # -------------------------------------------------
-st.subheader("⏰ Nächster Microsoft Patchday")
+st.subheader("⏰ Patchday Status")
 
 st.metric(
-    label="Patchday Datum",
-    value=patchday.strftime("%d.%m.%Y"),
-    delta=f"in {days_left} Tagen"
+    "Nächster Patchday",
+    patchday.strftime("%d.%m.%Y"),
+    f"in {days_left} Tagen"
 )
 
-st.markdown(f"""
-### 🚦 Impact-Einschätzung
-**Stufe:** {level}  
-**Erwartung:** {impact_text}
-""")
+# -------------------------------------------------
+# Update Button
+# -------------------------------------------------
+st.subheader("🔄 Microsoft Live-Daten")
+
+if st.button("Jetzt Microsoft-Daten aktualisieren"):
+    st.cache_data.clear()
+    with st.spinner("Microsoft Security Update Guide wird abgefragt …"):
+        time.sleep(1)
+
+raw_data = fetch_msrc_updates()
 
 # -------------------------------------------------
-# Proxy Impact Warning
+# API Status
+# -------------------------------------------------
+if "error" in raw_data:
+    st.error(f"❌ MSRC API nicht erreichbar: {raw_data['error']}")
+    st.info("Patchday-Erinnerung funktioniert weiterhin ohne API.")
+else:
+    st.success("✅ Echte Microsoft-Daten erfolgreich geladen")
+
+    df = extract_patchday_updates(raw_data)
+
+    st.subheader("📦 Aktuelle Microsoft Security Updates")
+
+    if df.empty:
+        st.warning("Noch keine Patchday-Daten veröffentlicht.")
+    else:
+        st.dataframe(
+            df.head(50),
+            use_container_width=True,
+            hide_index=True
+        )
+
+# -------------------------------------------------
+# FortiProxy Impact
 # -------------------------------------------------
 st.error("""
-⚠️ **ACHTUNG: Proxy- & Netzwerk-Impact**
+⚠️ **FortiProxy Impact Warning**
 
-Am Microsoft Patchday ist mit **massiv erhöhtem ausgehendem Traffic**
-in Richtung Microsoft-Cloud & CDN zu rechnen.
+Sobald Microsoft Updates veröffentlicht:
+- 📈 Massiver Traffic zu Microsoft CDNs
+- 🔐 TLS & SSL Inspection Last steigt stark
+- 🧱 Proxy Sessions explodieren
 
-**Typische Auswirkungen:**
-- Erhöhte Proxy-CPU & Session-Zahlen
-- Bandbreiten-Sättigung
-- Verzögerte Updates / Client-Timeouts
-- Beeinträchtigung anderer Cloud-Dienste
+➡️ **Empfehlung:** Bypass / Reduced Inspection aktivieren
 """)
 
 # -------------------------------------------------
-# Preparation Checklist
+# Recommendations
 # -------------------------------------------------
-with st.expander("🛠 Operative Vorbereitung (empfohlen)"):
+with st.expander("🧱 FortiProxy – Empfohlene Domains (Bypass)"):
     st.markdown("""
-**Vor Patchday (T-3 bis T-1):**
-- ✅ Proxy- & Firewall-Health prüfen
-- ✅ Bandbreiten- & QoS-Regeln kontrollieren
-- ✅ SSL Inspection Ausnahmen prüfen
-- ✅ Windows Update Caching (WSUS / Delivery Optimization)
-
-**Am Patchday:**
-- 👀 Live-Monitoring (Sessions, Throughput, Errors)
-- 📊 Proxy-Dashboards offen halten
-- 🧯 Incident-Bereitschaft sicherstellen
-
-**Nach Patchday:**
-- 📉 Traffic normalisiert sich i.d.R. nach 24–72h
-- 📝 Lessons Learned dokumentieren
-""")
-
-# -------------------------------------------------
-# Patchday Preview
-# -------------------------------------------------
-st.subheader("📅 Patchday Vorschau")
-
-preview = []
-for i in range(6):
-    future = patchday + timedelta(days=30 * i)
-    pd_day = second_tuesday(future.year, future.month)
-    preview.append({
-        "Monat": pd_day.strftime("%B %Y"),
-        "Datum": pd_day.strftime("%d.%m.%Y"),
-        "Typischer Impact": "Erhöhter Microsoft Update & CDN Traffic"
-    })
-
-df = pd.DataFrame(preview)
-st.dataframe(df, hide_index=True, use_container_width=True)
-
-# -------------------------------------------------
-# Footer
-# -------------------------------------------------
-st.caption(
-    "🚨 Reminder-App für IT Operations | Fokus: Proxy, Firewall, Netzwerk, Cloud Access"
-)
-
