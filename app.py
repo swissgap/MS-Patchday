@@ -31,6 +31,8 @@ IMPACT_SCORES = {
     "Office": 3
 }
 
+ALL_CATEGORIES = ["Windows", "Defender", "Office", "Other"]
+
 # -----------------------------
 # Helper Functions
 # -----------------------------
@@ -66,6 +68,7 @@ def fetch_msrc_updates():
         return {"error": str(e)}
 
 def classify_high_impact_releases(raw_data, patchday):
+    """Filtert MSRC API auf High-Impact Releases"""
     results = []
     if "value" not in raw_data:
         return pd.DataFrame()
@@ -81,6 +84,7 @@ def classify_high_impact_releases(raw_data, patchday):
             continue
         if not (window_start <= release_dt < window_end):
             continue
+        category_matched = False
         for category, keywords in HIGH_IMPACT_KEYWORDS.items():
             if any(k in product for k in keywords):
                 results.append({
@@ -90,6 +94,15 @@ def classify_high_impact_releases(raw_data, patchday):
                     "Proxy Impact": "HIGH",
                     "Impact Score": IMPACT_SCORES[category]
                 })
+                category_matched = True
+        if not category_matched:
+            results.append({
+                "Kategorie": "Other",
+                "Produkt": item.get("productName"),
+                "Release": release_dt.strftime("%d.%m.%Y %H:%M"),
+                "Proxy Impact": "LOW",
+                "Impact Score": 1
+            })
     return pd.DataFrame(results)
 
 def patchday_traffic_light(days_to_patchday, high_impact_count):
@@ -100,6 +113,23 @@ def patchday_traffic_light(days_to_patchday, high_impact_count):
     if days_to_patchday <= 3:
         return "🟠 ORANGE", "Patchday steht bevor – Proxy & Capacity vorbereiten"
     return "🟢 GRÜN", "Kein erhöhter Microsoft Update Traffic erwartet"
+
+def patchday_category_preview():
+    """
+    Gibt vorab an, welche Kategorien beim nächsten Patchday typischerweise Updates bekommen.
+    Windows / Defender / Office = High-Impact, Other = optional
+    """
+    preview_data = []
+    for cat in ALL_CATEGORIES:
+        if cat in HIGH_IMPACT_KEYWORDS:
+            impact = "HIGH"
+        else:
+            impact = "LOW"
+        preview_data.append({
+            "Kategorie": cat,
+            "Erwarteter Impact": impact
+        })
+    return pd.DataFrame(preview_data)
 
 # -----------------------------
 # Patchday Berechnen
@@ -125,38 +155,37 @@ raw_data = fetch_msrc_updates()
 if "error" in raw_data:
     st.error(f"❌ MSRC API nicht erreichbar: {raw_data['error']}")
     st.info("Patchday-Erinnerung funktioniert weiterhin ohne API.")
+    df_high = pd.DataFrame()
 else:
     st.success("✅ Echte Microsoft-Daten erfolgreich geladen")
-
-    # -----------------------------
-    # High-Impact Releases filtern
-    # -----------------------------
     df_high = classify_high_impact_releases(raw_data, patchday)
-    high_impact_count = len(df_high)
 
-    # -----------------------------
-    # Ampel
-    # -----------------------------
-    ampel, ampel_text = patchday_traffic_light(days_left, high_impact_count)
-    st.subheader("🚦 Proxy Traffic Ampel (High-Impact Fokus)")
-    if "ROT" in ampel:
-        st.error(f"**{ampel}** – {ampel_text}")
-    elif "ORANGE" in ampel:
-        st.warning(f"**{ampel}** – {ampel_text}")
-    else:
-        st.success(f"**{ampel}** – {ampel_text}")
+# -----------------------------
+# High-Impact Releases
+# -----------------------------
+high_impact_count = len(df_high[df_high["Kategorie"].isin(HIGH_IMPACT_KEYWORDS)])
 
-    # -----------------------------
-    # High-Impact Releases anzeigen
-    # -----------------------------
-    st.subheader("🔥 High-Impact Patchday Releases")
-    if df_high.empty:
-        st.info("Keine Windows / Defender / Office Releases erkannt.")
-    else:
-        st.error(
-            f"🚨 {len(df_high)} High-Impact Releases – FortiProxy stark belastet!"
-        )
-        st.dataframe(df_high, hide_index=True, use_container_width=True)
+ampel, ampel_text = patchday_traffic_light(days_left, high_impact_count)
+st.subheader("🚦 Proxy Traffic Ampel (High-Impact Fokus)")
+if "ROT" in ampel:
+    st.error(f"**{ampel}** – {ampel_text}")
+elif "ORANGE" in ampel:
+    st.warning(f"**{ampel}** – {ampel_text}")
+else:
+    st.success(f"**{ampel}** – {ampel_text}")
+
+st.subheader("🔥 High-Impact Patchday Releases")
+if df_high.empty:
+    st.info("Noch keine Windows / Defender / Office Releases erkannt.")
+else:
+    st.dataframe(df_high, hide_index=True, use_container_width=True)
+
+# -----------------------------
+# Vorschau: Kategorien nächster Patchday
+# -----------------------------
+st.subheader("🔮 Vorschau – Kategorien nächster Patchday")
+df_preview = patchday_category_preview()
+st.table(df_preview)
 
 # -----------------------------
 # FortiProxy Empfehlungen
@@ -186,4 +215,5 @@ with st.expander("Domains / Bypass Settings"):
 st.caption(
     "Live MSRC Daten | High-Impact Patchday Monitoring | FortiProxy Ops"
 )
+
 
