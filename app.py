@@ -3,6 +3,7 @@ import pandas as pd
 import requests
 from datetime import date, timedelta, datetime
 import time
+import socket
 
 # -----------------------------
 # Page Config
@@ -14,7 +15,7 @@ st.set_page_config(
 )
 
 st.title("🧱 Microsoft Patchday – FortiProxy Monitor")
-st.caption("High-Impact Updates: Windows / Defender / Office")
+st.caption("High-Impact Updates & Live Network Check")
 
 # -----------------------------
 # High-Impact Kategorien
@@ -38,7 +39,7 @@ ALL_CATEGORIES = ["Windows", "Defender", "Office", "Other"]
 # -----------------------------
 def second_tuesday(year, month):
     d = date(year, month, 1)
-    while d.weekday() != 1:  # Tuesday
+    while d.weekday() != 1:  # Dienstag
         d += timedelta(days=1)
     return d + timedelta(days=7)
 
@@ -69,7 +70,6 @@ def fetch_msrc_updates():
 
 def classify_high_impact_releases(raw_data, patchday):
     """Filtert MSRC API auf High-Impact Releases"""
-    # Immer DataFrame mit festen Spalten zurückgeben
     results = []
     columns = ["Kategorie", "Produkt", "Release", "Proxy Impact", "Impact Score"]
     if "value" not in raw_data:
@@ -109,7 +109,10 @@ def classify_high_impact_releases(raw_data, patchday):
             })
     return pd.DataFrame(results, columns=columns)
 
-def patchday_traffic_light(days_to_patchday, high_impact_count):
+def patchday_traffic_light(days_to_patchday, high_impact_count, network_warning=False):
+    """Ampel Logik + Network Warning berücksichtigt"""
+    if network_warning:
+        return "🔴 ROT", "WARNUNG: Abweichende Domains/IPs erkannt! Sofortige Anpassung notwendig!"
     if high_impact_count > 0:
         return "🔴 ROT", "Microsoft hat Security Updates veröffentlicht – Proxy Impact AKTIV"
     if days_to_patchday <= 1:
@@ -128,6 +131,27 @@ def patchday_category_preview():
             "Erwarteter Impact": impact
         })
     return pd.DataFrame(preview_data)
+
+def patchday_network_preview():
+    """Vorschau bekannte Domains für Patchday"""
+    preview_data = [
+        {"Kategorie": "Windows", "Typ": "CDN / Patchday", "URL/IP": "*.windowsupdate.microsoft.com"},
+        {"Kategorie": "Windows", "Typ": "CDN / Patchday", "URL/IP": "*.download.windowsupdate.com"},
+        {"Kategorie": "Windows", "Typ": "CDN / Patchday", "URL/IP": "*.delivery.mp.microsoft.com"},
+        {"Kategorie": "Office", "Typ": "CDN", "URL/IP": "*.officecdn.microsoft.com"},
+        {"Kategorie": "Office", "Typ": "CDN", "URL/IP": "officecdn.microsoft.com.edgesuite.net"},
+        {"Kategorie": "Defender", "Typ": "Update / Intelligence", "URL/IP": "*.wdcp.microsoft.com"},
+        {"Kategorie": "Defender", "Typ": "Update / Intelligence", "URL/IP": "*.dl.delivery.mp.microsoft.com"},
+    ]
+    return pd.DataFrame(preview_data)
+
+def resolve_ips(domain_pattern):
+    """Wildcard Domain → Basisdomain → IP Lookup"""
+    domain = domain_pattern.replace("*.", "")
+    try:
+        return socket.gethostbyname_ex(domain)[2]
+    except Exception:
+        return []
 
 # -----------------------------
 # Patchday Berechnen
@@ -166,8 +190,30 @@ if "Kategorie" in df_high.columns:
 else:
     high_impact_count = 0
 
-ampel, ampel_text = patchday_traffic_light(days_left, high_impact_count)
-st.subheader("🚦 Proxy Traffic Ampel (High-Impact Fokus)")
+# -----------------------------
+# Netzwerk / Live IP Check
+# -----------------------------
+st.subheader("🌐 Netzwerk-Vorschau & Live IP Check")
+df_network_preview = patchday_network_preview()
+
+network_warning = False
+ip_results = []
+
+with st.expander("Domains / Live IPs prüfen"):
+    st.info("Wildcard Domains werden auf Basisdomain geprüft")
+    for row in df_network_preview.itertuples():
+        ips = resolve_ips(row._3)
+        if not ips:
+            network_warning = True  # Warnung wenn IP nicht auflösbar
+        ip_results.append({"Kategorie": row.Kategorie, "Domain": row._3, "Gefundene IPs": ", ".join(ips)})
+    df_ip = pd.DataFrame(ip_results)
+    st.table(df_ip)
+
+# -----------------------------
+# Ampel inklusive Network Warning
+# -----------------------------
+ampel, ampel_text = patchday_traffic_light(days_left, high_impact_count, network_warning)
+st.subheader("🚦 Proxy Traffic Ampel")
 if "ROT" in ampel:
     st.error(f"**{ampel}** – {ampel_text}")
 elif "ORANGE" in ampel:
@@ -175,6 +221,9 @@ elif "ORANGE" in ampel:
 else:
     st.success(f"**{ampel}** – {ampel_text}")
 
+# -----------------------------
+# High-Impact Releases Tabelle
+# -----------------------------
 st.subheader("🔥 High-Impact Patchday Releases")
 if df_high.empty:
     st.info("Noch keine Windows / Defender / Office Releases erkannt.")
@@ -209,23 +258,6 @@ with st.expander("Domains / Bypass Settings"):
 - Logging: ❌ Minimal  
 - Proxy Caching aktivieren (optional)
 """)
-# -------------------------------------------------
-# Patchday Preview
-# -------------------------------------------------
-st.subheader("📅 Patchday Vorschau")
-
-preview = []
-for i in range(6):
-    future = patchday + timedelta(days=30 * i)
-    pd_day = second_tuesday(future.year, future.month)
-    preview.append({
-        "Monat": pd_day.strftime("%B %Y"),
-        "Datum": pd_day.strftime("%d.%m.%Y"),
-        "Typischer Impact": "Erhöhter Microsoft Update & CDN Traffic"
-    })
-
-df = pd.DataFrame(preview)
-st.dataframe(df, hide_index=True, use_container_width=True)
 
 # -----------------------------
 # Footer
